@@ -37,7 +37,6 @@ SPARKAI_APP_ID = os.environ.get("SPARKAI_APP_ID")
 SPARKAI_API_SECRET = os.environ.get("SPARKAI_API_SECRET")
 SPARKAI_API_KEY = os.environ.get("SPARKAI_API_KEY")
 
-
 config = Config(SPARKAI_APP_ID, SPARKAI_API_KEY, SPARKAI_API_SECRET)
 
 dashscope.api_key = os.environ.get("dashscope_api_key")
@@ -191,35 +190,19 @@ def load_rerank_model(model_name=rerank_model_name):
     rerank_model_path = os.path.join(rerank_path, model_name.split('/')[1] + '.pkl')
     #print(rerank_model_path)
     logger.info('Loading rerank model...')
-    if os.path.exists(rerank_model_path):
-        try:
-            with open(rerank_model_path , 'rb') as f:
-                reranker_model = pickle.load(f)
-                logger.info('Rerank model loaded.')
-                return reranker_model
-        except Exception as e:
-            logger.error(f'Failed to load embedding model from {rerank_model_path}')
-    else:
-        try:
-            os.system('apt install git')
-            os.system('apt install git-lfs')
-            os.system(f'git clone https://code.openxlab.org.cn/answer-qzd/bge_rerank.git {rerank_path}')
-            os.system(f'cd {rerank_path} && git lfs pull')
 
-            with open(rerank_model_path , 'rb') as f:
-                reranker_model = pickle.load(f)
-                logger.info('Rerank model loaded.')
-                return reranker_model
+    from FlagEmbedding import FlagReranker
+    reranker = FlagReranker('BAAI/bge-reranker-large', use_fp16=True)
+    logger.info('Loading rerank model success...')
+    return reranker
 
-        except Exception as e:
-            logger.error(f'Failed to load rerank model: {e}')
 
 def rerank(reranker, query, contexts, select_num):
-        merge = [[query, context] for context in contexts]
-        scores = reranker.compute_score(merge)
-        sorted_indices = np.argsort(scores)[::-1]
+    merge = [[query, context] for context in contexts]
+    scores = reranker.compute_score(merge)
+    sorted_indices = np.argsort(scores)[::-1]
 
-        return [contexts[i] for i in sorted_indices[:select_num]]
+    return [contexts[i] for i in sorted_indices[:select_num]]
 
 def embedding_make(text_input, pdf_directory):
 
@@ -248,12 +231,11 @@ def embedding_make(text_input, pdf_directory):
         text_spliter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=300)
         docs = text_spliter.create_documents([all_text])
         splits = text_spliter.split_documents(docs)
-        question=text_input
+        question = text_input
 
         retriever = BM25Retriever.from_documents(splits)
         retriever.k = 20
         bm25_result = retriever.invoke(question)
-
 
         em = LLMEmbedding(config)
         question_vector = em.get_embedding(question)
@@ -264,7 +246,8 @@ def embedding_make(text_input, pdf_directory):
         em = LLMEmbedding(config)
         for i in range(len(bm25_result)):
             x = em.get_embedding(bm25_result[i].page_content)
-            pdf_vector_list.append(x)
+            if x:
+                pdf_vector_list.append(x)
             time.sleep(0.65)
 
         query_embedding = np.array(question_vector)
@@ -281,9 +264,13 @@ def embedding_make(text_input, pdf_directory):
             emb_list.append(all_page)
         print(len(emb_list))
 
-        reranker_model = load_rerank_model()
+        use_rerank = False
+        if use_rerank:
+            reranker_model = load_rerank_model()
+            documents = rerank(reranker_model, question, emb_list, 3)
+        else:
+            documents = emb_list[:3]
 
-        documents = rerank(reranker_model, question, emb_list, 3)
         logger.info("After rerank...")
         reranked = []
         for doc in documents:
@@ -385,65 +372,6 @@ client = OpenAI(
 # )
 
 amap_key = os.environ.get("amap_key")
-
-def get_completion(messages, model="deepseek-chat"):
-    response = client.chat.completions.create(
-        model=model,
-        messages=messages,
-        temperature=0,  # 模型输出的随机性，0 表示随机性最小
-        seed=1024,  # 随机种子保持不变，temperature 和 prompt 不变的情况下，输出就会不变
-        tool_choice="auto",  # 默认值，由系统自动决定，返回function call还是返回文字回复
-        tools=[{
-            "type": "function",
-            "function": {
-
-                "name": "get_location_coordinate",
-                "description": "根据POI名称，获得POI的经纬度坐标",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "location": {
-                            "type": "string",
-                            "description": "POI名称，必须是中文",
-                        },
-                        "city": {
-                            "type": "string",
-                            "description": "POI所在的城市名，必须是中文",
-                        }
-                    },
-                    "required": ["location", "city"],
-                }
-            }
-        },
-            {
-            "type": "function",
-            "function": {
-                "name": "search_nearby_pois",
-                "description": "搜索给定坐标附近的poi",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "longitude": {
-                            "type": "string",
-                            "description": "中心点的经度",
-                        },
-                        "latitude": {
-                            "type": "string",
-                            "description": "中心点的纬度",
-                        },
-                        "keyword": {
-                            "type": "string",
-                            "description": "目标poi的关键字",
-                        }
-                    },
-                    "required": ["longitude", "latitude", "keyword"],
-                }
-            }
-        }],
-    )
-    return response.choices[0].message
-
-
 
 
 def get_location_coordinate(location, city):
@@ -765,7 +693,7 @@ with gr.Blocks(css=css) as demo:
     <body>
             <div class="container">
                 <div class="logo">
-                    <img src="https://img.picui.cn/free/2024/09/25/66f3cdc149a78.png" alt="Logo" width="30%">
+                    <img src="https://img.picui.cn/free/2025/06/29/6860a0dde1994.png" alt="Logo" width="30%">
                 </div>
                 <div class="content">
                     <h2>😀 欢迎来到“LvBan恣行”，您的专属旅行伙伴！我们致力于为您提供个性化的旅行规划、陪伴和分享服务，让您的旅程充满乐趣并留下难忘回忆。\n</h2>
@@ -933,13 +861,13 @@ with gr.Blocks(css=css) as demo:
             # with gr.Column():
                 audio_output = gr.Audio(label="音频播放", interactive=False, visible=True)
 
-            with gr.Column():
-                video_output = gr.Video(label="数字人",visible=True)
+            # with gr.Column():
+            #     video_output = gr.Video(label="数字人",visible=True)
 
         with gr.Row():
-            generate_button = gr.Button("第一步：生成文案", visible=True,elem_id="button")
-            convert_button1 = gr.Button("第二步：文案转语音", visible=True,elem_id="button")
-            convert_button2 = gr.Button("第三步：文案转视频(请耐心等待)", visible=True,elem_id="button")
+            generate_button = gr.Button("第一步：生成文案", visible=True, elem_id="button")
+            convert_button1 = gr.Button("第二步：文案转语音", visible=True, elem_id="button")
+            # convert_button2 = gr.Button("第三步：文案转视频(请耐心等待)", visible=True,elem_id="button")
         with gr.Row():
             with gr.Column():
 
@@ -952,7 +880,7 @@ with gr.Blocks(css=css) as demo:
 
         convert_button1.click(on_convert_click, inputs=[generated_text], outputs=[audio_output])
 
-        convert_button2.click(on_lip_click, inputs=[generated_text],outputs=[video_output])
+        # convert_button2.click(on_lip_click, inputs=[generated_text],outputs=[video_output])
 
         generate_btn.click(generate_image, inputs=prompt_input, outputs=output_image)
 
