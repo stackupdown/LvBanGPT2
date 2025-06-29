@@ -122,9 +122,7 @@ def process_audio(audio, history):
 
             if not audio_text.strip():
                 return "未识别到语音，请重试。", history
-            # model = MultiLang(config, stream=False)
             model = agent
-            # response, _ = model.generate([dict(role="user", content=audio_text)])
             response, _ = model.generate(audio_text)
             print(f"生成的响应: {response}")
 
@@ -166,8 +164,11 @@ def get_embedding_pdf(text, pdf_directory):
 
 def generate_image(prompt):
     logger.info(f'生成图片: {prompt}')
-    output_path = './demo.jpg'
-    t2i.generate(prompt, output_path)
+    output_path = './generated_images'
+    if not os.path.exists(output_path):
+        os.makedirs(output_path)
+        logger.info(f"create directory: {output_path}")
+    output_path = t2i.generate(prompt, output_path)
     return output_path
 
 
@@ -262,7 +263,6 @@ def embedding_make(text_input, pdf_directory):
         for idx in top_k_indices:
             all_page = splits[idx].page_content
             emb_list.append(all_page)
-        print(len(emb_list))
 
         use_rerank = False
         if use_rerank:
@@ -729,7 +729,7 @@ with gr.Blocks(css=css) as demo:
         # gr.Examples(["合肥", "郑州", "西安", "北京", "广州", "大连"], chat_departure)
         # gr.Examples(["北京", "南京", "大理", "上海", "东京", "巴黎"], chat_destination)
         # 按钮出发逻辑
-        llm_submit_tab.click(fn=chat, inputs=[chat_destination, chatbot, chat_departure, chat_days, chat_style, chat_budget, chat_people, chat_other], outputs=[ chat_destination,chatbot])
+        llm_submit_tab.click(fn=chat, inputs=[chat_destination, chatbot, chat_departure, chat_days, chat_style, chat_budget, chat_people, chat_other], outputs=[ chat_destination, chatbot])
     def respond(message, chat_history, use_kb):
             return process_question(chat_history, use_kb, message)
     def clear_chat(chat_history):
